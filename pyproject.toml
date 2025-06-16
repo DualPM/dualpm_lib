@@ -11,9 +11,13 @@ dependencies = [
     "torch==2.*",
     "nvdiffrast@git+https://github.com/NVlabs/nvdiffrast.git@v0.3.3",
 ]
+readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.10"
 version = "0.0.1"
+
+[project.urls]
+Homepage = "https://dualpm.github.io/"
 
 
 [tool.ruff]
