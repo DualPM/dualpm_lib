@@ -139,8 +139,7 @@ def apply_transform(points: torch.Tensor, transform: torch.Tensor) -> torch.Tens
     ), "Transform must be [R | t; 0 0 0 1] format"
 
     # Apply transformation: points * R.T + t
-    transform = transpose(transform)
-    return points @ transform[..., :3, :3] + transform[..., 3, :3]
+    return points @ transpose(transform[..., :3, :3]) + transform[..., :3, 3]
 
 
 def apply_projection(points: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
@@ -167,5 +166,5 @@ def apply_projection(points: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor
     # Apply projection: (points * P.T) where P is projection matrix
     return torch.matmul(
         homogeneous_points,
-        einops.rearrange(matrix, "... i j -> ... j i"),
+        transpose(matrix),
     )
