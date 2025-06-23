@@ -17,98 +17,34 @@ import torch.nn.functional as F
 import einops
 
 
-def perspective_transform(
-    fov_y: torch.Tensor, aspect: float = 1.0, near: float = 0.1, far: float = 1000.0
-) -> torch.Tensor:
-    """Create a perspective projection matrix from field of view parameters.
-
-    Constructs a standard perspective projection matrix suitable for 3D rendering
-    pipelines. The matrix transforms from camera space to normalized device coordinates.
-
-    Args:
-        fov_y: Vertical field of view in radians. Shape (B,) for batch processing.
-        aspect: Aspect ratio (width/height). Defaults to 1.0 for square aspect.
-        near: Near clipping plane distance. Must be positive.
-        far: Far clipping plane distance. Must be greater than near.
-
-    Returns:
-        Perspective projection matrix of shape (B, 4, 4) where B matches fov_y batch size.
-        The matrix follows OpenGL conventions with NDC range [-1, 1].
-
-    Note:
-        Uses standard perspective projection formulation. The resulting matrix
-        maps camera space coordinates to clip space coordinates that can be used
-        with graphics rasterization pipelines.
-
-    Example:
-        >>> fov = torch.tensor([60.0]) * torch.pi / 180  # Convert degrees to radians
-        >>> proj = perspective_transform(fov, aspect=16/9, near=0.1, far=100.0)
-        >>> print(proj.shape)  # torch.Size([1, 4, 4])
-    """
-    device = fov_y.device
-    y = torch.tan(fov_y / 2)
-    batch_size = fov_y.shape[0]
-    perspective_matrix = torch.tensor(
-        [
-            [0, 0, 0, 0],
-            [0, 0, 0, 0],
-            [0, 0, -(far + near) / (far - near), -(2 * far * near) / (far - near)],
-            [0, 0, -1, 0],
-        ],
-        dtype=torch.float32,
-        device=device,
-    )[None, ...].repeat(batch_size, 1, 1)
-
-    perspective_matrix[:, 0, 0] = 1 / (y * aspect)
-    perspective_matrix[:, 1, 1] = 1 / -y
-
-    return perspective_matrix
-
-
-def perspective_from_focal_length(
-    normalised_focal_length: torch.Tensor,
+def perspective_matrix(
+    tan_half_fov: torch.Tensor | float,
     aspect: float = 1.0,
     near: float = 1e-1,
     far: float = 30.0,
 ) -> torch.Tensor:
-    """Create a perspective projection matrix from normalized focal length.
-
-    Constructs a perspective projection matrix using focal length parameterization
-    instead of field of view. The focal length should be normalized by image dimensions.
+    """
+    OpenGL perspective matrix with clip space coordinates [-1, 1]
 
     Args:
-        normalised_focal_length: Focal length normalized by image height. Can be a
-            scalar, 0-d tensor, or 1-d tensor for batch processing.
-        aspect: Aspect ratio (width/height). Defaults to 1.0.
-        near: Near clipping plane distance. Must be positive.
-        far: Far clipping plane distance. Must be greater than near.
+        tan_half_fov: tan of half the vertical field of view
+        aspect: aspect ratio
+        near: near clipping plane distance
+        far: far clipping plane distance
 
     Returns:
-        Perspective projection matrix of shape (B, 4, 4) where B is the batch size
-        of normalised_focal_length.
+        Perspective matrix of shape (B, 4, 4)
 
-    Note:
-        The normalized focal length should be computed as focal_length_pixels / image_height.
-        This parameterization is common in computer vision applications where camera
-        intrinsics are specified in pixel units.
-
-    Example:
-        >>> # For a camera with 800px focal length and 600px image height
-        >>> norm_focal = torch.tensor([800.0 / 600.0])
-        >>> proj = perspective_from_focal_length(norm_focal, aspect=4/3)
-        >>> print(proj.shape)  # torch.Size([1, 4, 4])
+    IF tan_half_fov is scalar, B=1
     """
-    if not isinstance(normalised_focal_length, torch.Tensor):
-        normalised_focal_length = torch.tensor(
-            [normalised_focal_length], dtype=torch.float32
-        )
-    elif normalised_focal_length.dim() == 0:
-        normalised_focal_length = normalised_focal_length[None]
+    if not isinstance(tan_half_fov, torch.Tensor):
+        tan_half_fov = torch.tensor([tan_half_fov], dtype=torch.float32)
+    elif tan_half_fov.dim() == 0:
+        tan_half_fov = tan_half_fov[None]
 
-    device = normalised_focal_length.device
-    batch_size = normalised_focal_length.shape[0]
+    device = tan_half_fov.device
+    batch_size = tan_half_fov.shape[0]
 
-    scale = 2 * normalised_focal_length
     clip_projection = torch.tensor(
         [
             [0, 0, 0, 0],
@@ -120,70 +56,16 @@ def perspective_from_focal_length(
         device=device,
     )[None].repeat(batch_size, 1, 1)
 
-    clip_projection[:, 0, 0] = scale / aspect
-    clip_projection[:, 1, 1] = -scale
+    clip_projection[:, 0, 0] = tan_half_fov / aspect
+    clip_projection[:, 1, 1] = -tan_half_fov
 
     return clip_projection
 
 
-def get_projection(
-    fov: float | torch.Tensor, znear: float = 1e-1, zfar: float = 1000.0
-) -> torch.Tensor:
-    """Create a perspective projection matrix from field of view in degrees.
+def tan_half_fov(focal_length: float, sensor_height: float) -> float:
+    #  construct tan of half the vertical field of view
 
-    Convenience function that creates a perspective projection matrix from field of view
-    specified in degrees. Internally converts to radians and calls perspective_transform.
-
-    Args:
-        fov: Vertical field of view in degrees. Can be float or tensor.
-        znear: Near clipping plane distance. Must be positive.
-        zfar: Far clipping plane distance. Must be greater than znear.
-
-    Returns:
-        Perspective projection matrix of shape (B, 4, 4) where B is 1 for scalar input
-        or matches the batch size of fov tensor.
-
-    Example:
-        >>> proj = get_projection(60.0, znear=0.1, zfar=100.0)  # 60 degree FOV
-        >>> print(proj.shape)  # torch.Size([1, 4, 4])
-    """
-    if not isinstance(fov, torch.Tensor):
-        fov = torch.tensor([fov], dtype=torch.float32)
-
-    # Convert degrees to radians
-    fov_rad = fov * torch.pi / 180.0
-    projection = perspective_transform(fov_rad, 1.0, znear, zfar)
-
-    return projection
-
-
-def get_fov(focal_length: float | torch.Tensor, frame_height: float) -> torch.Tensor:
-    """Calculate field of view from focal length and sensor size.
-
-    Computes the vertical field of view angle from focal length and sensor height.
-    Uses the standard pinhole camera model relationship.
-
-    Args:
-        focal_length: Focal length in the same units as frame_height.
-        frame_height: Sensor/frame height in the same units as focal_length.
-            Defaults to 36.0mm (full-frame sensor height).
-
-    Returns:
-        Vertical field of view in radians as a tensor.
-
-    Note:
-        This relationship is: FOV = 2 * arctan(frame_height / (2 * focal_length))
-        Common sensor sizes: 36mm (full-frame), 24mm (APS-C), 13.2mm (4/3).
-
-    Example:
-        >>> fov_rad = get_fov(50.0, frame_height=36.0)  # 50mm lens on full-frame
-        >>> fov_deg = fov_rad * 180 / torch.pi
-        >>> print(f"FOV: {fov_deg.item():.1f} degrees")
-    """
-    if not isinstance(focal_length, torch.Tensor):
-        focal_length = torch.tensor([focal_length], dtype=torch.float32)
-    fov = 2.0 * torch.arctan(frame_height / (2.0 * focal_length))
-    return fov
+    return focal_length / sensor_height / 2
 
 
 def transpose(x: torch.Tensor) -> torch.Tensor:
@@ -276,20 +158,9 @@ def apply_projection(points: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor
     Returns:
         Homogeneous clip space coordinates of shape (..., N, 4). The w-component
         contains the homogeneous coordinate for perspective division.
-
-    Note:
-        After this transformation, perspective division (dividing x,y,z by w)
-        yields normalized device coordinates (NDC). This is typically handled
-        automatically by graphics hardware or rasterization libraries.
-
-    Example:
-        >>> points = torch.randn(100, 3)  # Camera space points
-        >>> proj_matrix = get_projection(60.0)  # 60 degree FOV
-        >>> clip_coords = apply_projection(points, proj_matrix)
-        >>> print(clip_coords.shape)  # torch.Size([1, 100, 4])
-        >>> # To get NDC coordinates:
-        >>> ndc = clip_coords[..., :3] / clip_coords[..., [3]]
     """
+    assert points.shape[-1] == 3, "Points must be in 3D"
+
     # Pad points to homogeneous coordinates (x, y, z, 1)
     homogeneous_points = F.pad(points, pad=(0, 1), mode="constant", value=1.0)
 

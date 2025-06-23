@@ -169,16 +169,6 @@ def dual_mesh_to_attributes(
         The subtract_depth option is useful for encoding relative depth information
         rather than absolute camera-space depth, which can improve numerical stability
         and representation quality in certain applications.
-
-    Example:
-        >>> canonical = torch.randn(100, 3)
-        >>> reconstruction = torch.randn(100, 3)
-        >>> mv = torch.eye(4)
-        >>> proj = get_projection(torch.tensor([45.0]))
-        >>> attrs, clips = dual_mesh_to_attributes(
-        ...     canonical, reconstruction, mv, proj, subtract_depth=True
-        ... )
-        >>> print(attrs.shape, clips.shape)  # torch.Size([1, 100, 6]) torch.Size([1, 100, 4])
     """
     # Determine processing mode based on input type
     list_mode: bool = not isinstance(canonical_vertices, torch.Tensor)
@@ -188,17 +178,23 @@ def dual_mesh_to_attributes(
         # Apply model-view transform to convert reconstruction vertices to camera space
         model_view_verts = [
             ut.apply_transform(v, mv)
-            for v, mv in zip(reconstruction_vertices, model_view)
+            for v, mv in zip(reconstruction_vertices, model_view, strict=True)
         ]
 
         # Apply projection to get clip space coordinates for rasterization
-        clip_verts = [ut.apply_projection(v, projection) for v in model_view_verts]
+        clip_verts = [
+            ut.apply_projection(v, p)
+            for v, p in zip(model_view_verts, projection, strict=True)
+        ]
 
         # Optionally subtract depth offset for relative depth encoding
         if subtract_depth:
             # Extract z-translation from model-view matrix (camera depth)
             model_view_verts = [
-                v - torch.tensor([0, 0, mv[2, 3]])[None, :]  # Subtract only z-component
+                v
+                - torch.tensor([0, 0, mv[2, 3]], device=v.device)[
+                    None, :
+                ]  # Subtract only z-component
                 for v, mv in zip(model_view_verts, model_view)
             ]
 
@@ -206,7 +202,7 @@ def dual_mesh_to_attributes(
         attributes = [
             torch.cat([canon_verts, reconstruction_verts], dim=-1)
             for canon_verts, reconstruction_verts in zip(
-                canonical_vertices, model_view_verts
+                canonical_vertices, model_view_verts, strict=True
             )
         ]
         return attributes, clip_verts
@@ -284,9 +280,14 @@ def rasterize(
     rasterized_alpha: (B, H, W, N, 1)
     """
 
-    assert vertex_clip_pos.shape[:2] == attributes.shape[:2], (
-        "must be one attribute per vertex!"
-    )
+    assert (
+        ranges is None
+        and vertex_clip_pos.shape[:2] == attributes.shape[:2]
+        or ranges is not None
+        and vertex_clip_pos.shape[0] == attributes.shape[0]
+    ), "must be one attribute per vertex!"
+    assert faces.dtype == torch.int32, "faces must be int32"
+    assert ranges is None or ranges.dtype == torch.int32, "ranges must be int32"
 
     if context is None:
         context = drt.RasterizeGLContext(output_db=False, device=device)

@@ -206,7 +206,15 @@ class RenderInput:
             self.ranges is not None and self.clip_vertices_pos.dim() == 2
         ), "clip_vertices_pos must be concatenated (2D) if ranges is provided"
 
-        assert self.clip_vertices_pos.shape[:2] == self.vertex_attributes.shape[:2], (
+        range_mode = self.ranges is not None
+
+        assert (
+            not range_mode
+            and self.clip_vertices_pos.shape[:2] == self.vertex_attributes.shape[:2]
+        ) or (
+            range_mode
+            and self.clip_vertices_pos.shape[0] == self.vertex_attributes.shape[0]
+        ), (
             "clip_vertices_pos and vertex_attributes must have matching leading dimensions"
         )
 
@@ -215,36 +223,23 @@ class RenderInput:
         )
 
     @staticmethod
-    def is_instance_mode(
-        clip_vertices_pos: list[torch.Tensor], faces: list[torch.Tensor]
-    ) -> bool:
-        """Determine if input data can use instanced rendering.
-
-        Instanced rendering is an optimization when all meshes in a batch have
-        identical geometry (vertices and faces) but different attributes.
-
-        Args:
-            clip_vertices_pos: List of clip space vertex positions for each mesh.
-            faces: List of face index arrays for each mesh.
-
-        Returns:
-            True if all meshes have identical geometry and can be instanced.
-
-        Note:
-            This optimization can significantly improve performance when rendering
-            multiple views of the same object or multiple objects with shared geometry.
+    def is_instance_mode(faces: list[torch.Tensor]) -> bool:
         """
-        # Check if all clip vertices are identical
-        for clip_verts in clip_vertices_pos[1:]:
-            if not clip_verts.allclose(clip_vertices_pos[0]):
-                return False
+        Determine if input data can use instanced rendering.
 
+        This requires the geometry to have identical faces, and different vertex positions.
+        """
         # Check if all face arrays are identical
-        for face_array in faces[1:]:
-            if not face_array.allclose(faces[0]):
-                return False
 
-        return True
+        len_ = len(faces[0])
+        diff_lengths = any(len(f) != len_ for f in faces[1:])
+
+        if diff_lengths:
+            return False
+
+        faces_0 = faces[0]
+        different_contents = any(not f.allclose(faces_0) for f in faces[1:])
+        return not different_contents
 
     @staticmethod
     def from_list(
@@ -271,19 +266,13 @@ class RenderInput:
             based on the input geometry.
 
         Note:
-            Instanced mode is used when all meshes have identical geometry.
-            Concatenated mode is used when meshes have different geometry,
-            requiring range information for proper indexing.
-
-        Example:
-            >>> # Create input for 3 different meshes
-            >>> clip_pos = [torch.randn(100, 4), torch.randn(150, 4), torch.randn(200, 4)]
-            >>> attributes = [torch.randn(100, 6), torch.randn(150, 6), torch.randn(200, 6)]
-            >>> faces = [torch.randint(0, 100, (180, 3)), torch.randint(0, 150, (270, 3)), torch.randint(0, 200, (360, 3))]
-            >>> render_input = RenderInput.from_list(clip_pos, attributes, faces)
+            Instanced mode is used when all meshes have identical faces
+            Range mode is used when meshes have different faces
         """
+        faces = [f.type(torch.int32) for f in faces]
+
         # Use instanced rendering if geometry is identical across all meshes
-        if RenderInput.is_instance_mode(clip_vertices_pos, faces):
+        if RenderInput.is_instance_mode(faces):
             return RenderInput(
                 clip_vertices_pos=torch.stack([c for c in clip_vertices_pos]),
                 vertex_attributes=torch.stack([c for c in vertex_attributes]),
@@ -291,17 +280,37 @@ class RenderInput:
                 ranges=None,
             )
 
-        lens_ = torch.tensor([t.shape[0] for t in clip_vertices_pos])
-        start_indices = torch.cumsum(lens_, dim=0)
-        ranges = torch.stack((start_indices, lens_), dim=-1)
+        # prepare inputs for range mode as specified in https://nvlabs.github.io/nvdiffrast/#geometry-and-minibatches-range-mode-vs-instanced-mode
 
-        faces_offset = torch.cat([f + start_i for f, start_i in zip(faces, start_indices)])
+        def starts_and_lengths(
+            tensor_list: list[torch.Tensor],
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            _lens = torch.tensor([0] + [len(t) for t in tensor_list])
+            start_indices = torch.cumsum(_lens[:-1], dim=0)
+            return start_indices, _lens[1:]
+
+        vertex_start_indices, _vertex_lens = starts_and_lengths(clip_vertices_pos)
+        faces_start_indices, faces_lens = starts_and_lengths(faces)
+
+        # offset the faces to refer to correct vertices
+        faces = torch.cat(
+            [
+                f + start_i
+                for f, start_i in zip(faces, vertex_start_indices, strict=True)
+            ]
+        )
+
+        # ranges is minibatch indices for faces
+        # eg which range of faces corresponds to which batch index
+        ranges = torch.stack((faces_start_indices, faces_lens), dim=-1)
+        ranges = ranges.type(torch.int32)
+
         clip_vertices_pos = torch.cat([c for c in clip_vertices_pos])
         vertex_attributes = torch.cat([c for c in vertex_attributes])
 
         return RenderInput(
             clip_vertices_pos=clip_vertices_pos,
             vertex_attributes=vertex_attributes,
-            faces=faces_offset,
+            faces=faces,
             ranges=ranges,
         )
