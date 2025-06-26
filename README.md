@@ -29,10 +29,10 @@ If you used our rendering library please cite us!
 
 bibtex
 ```
-@InProceedings{Kaye2025,
+@InProceedings{kaye2025dualpm,
   author    = {Ben Kaye and Tomas Jakab and Shangzhe Wu and Christian Rupprecht and Andrea Vedaldi},
-  title     = {DualPM: Dual Posed‑Canonical Point Maps for 3D Shape and Pose Reconstruction},
-  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  title     = {{DualPM}: Dual {Posed-Canonical} Point Maps for {3D} Shape and Pose Reconstruction},
+  booktitle = {Proceedings of the {IEEE/CVF} Conference on Computer Vision and Pattern Recognition ({CVPR})},
   month     = {June},
   year      = {2025},
   pages     = {6425--6435}
