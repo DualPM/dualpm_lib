@@ -45,6 +45,8 @@ def perspective_matrix(
     device = tan_half_fov.device
     batch_size = tan_half_fov.shape[0]
 
+    scale = 2 * tan_half_fov
+
     clip_projection = torch.tensor(
         [
             [0, 0, 0, 0],
@@ -56,8 +58,8 @@ def perspective_matrix(
         device=device,
     )[None].repeat(batch_size, 1, 1)
 
-    clip_projection[:, 0, 0] = tan_half_fov / aspect
-    clip_projection[:, 1, 1] = -tan_half_fov
+    clip_projection[:, 0, 0] = scale / aspect
+    clip_projection[:, 1, 1] = -scale
 
     return clip_projection
 
@@ -65,7 +67,7 @@ def perspective_matrix(
 def tan_half_fov(focal_length: float, sensor_height: float) -> float:
     #  construct tan of half the vertical field of view
 
-    return focal_length / sensor_height / 2
+    return focal_length / sensor_height
 
 
 def transpose(x: torch.Tensor) -> torch.Tensor:
