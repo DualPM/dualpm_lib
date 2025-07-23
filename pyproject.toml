@@ -14,7 +14,7 @@ dependencies = [
 readme = "README.md"
 license = "BSD-3-Clause"
 requires-python = ">=3.10"
-version = "0.0.1"
+version = "0.1.2"
 
 [project.urls]
 Homepage = "https://dualpm.github.io/"

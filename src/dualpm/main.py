@@ -195,7 +195,7 @@ def dual_mesh_to_attributes(
                 - torch.tensor([0, 0, mv[2, 3]], device=v.device)[
                     None, :
                 ]  # Subtract only z-component
-                for v, mv in zip(model_view_verts, model_view)
+                for v, mv in zip(model_view_verts, model_view, strict=True)
             ]
 
         # Concatenate canonical and transformed reconstruction vertices as attributes

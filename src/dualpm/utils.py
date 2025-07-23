@@ -18,7 +18,7 @@ import einops
 
 
 def perspective_matrix(
-    tan_half_fov: torch.Tensor | float,
+    cot_half_fov: torch.Tensor | float,
     aspect: float = 1.0,
     near: float = 1e-1,
     far: float = 30.0,
@@ -27,7 +27,7 @@ def perspective_matrix(
     OpenGL perspective matrix with clip space coordinates [-1, 1]
 
     Args:
-        tan_half_fov: tan of half the vertical field of view
+        cot_half_fov: cotangent of half the vertical field of view
         aspect: aspect ratio
         near: near clipping plane distance
         far: far clipping plane distance
@@ -35,17 +35,15 @@ def perspective_matrix(
     Returns:
         Perspective matrix of shape (B, 4, 4)
 
-    IF tan_half_fov is scalar, B=1
+    IF cot_half_fov is scalar, B=1
     """
-    if not isinstance(tan_half_fov, torch.Tensor):
-        tan_half_fov = torch.tensor([tan_half_fov], dtype=torch.float32)
-    elif tan_half_fov.dim() == 0:
-        tan_half_fov = tan_half_fov[None]
+    if not isinstance(cot_half_fov, torch.Tensor):
+        cot_half_fov = torch.tensor([cot_half_fov], dtype=torch.float32)
+    elif cot_half_fov.dim() == 0:
+        cot_half_fov = cot_half_fov[None]
 
-    device = tan_half_fov.device
-    batch_size = tan_half_fov.shape[0]
-
-    scale = 2 * tan_half_fov
+    device = cot_half_fov.device
+    batch_size = cot_half_fov.shape[0]
 
     clip_projection = torch.tensor(
         [
@@ -58,16 +56,17 @@ def perspective_matrix(
         device=device,
     )[None].repeat(batch_size, 1, 1)
 
-    clip_projection[:, 0, 0] = scale / aspect
-    clip_projection[:, 1, 1] = -scale
+    clip_projection[:, 0, 0] = cot_half_fov / aspect
+    clip_projection[:, 1, 1] = -cot_half_fov
 
     return clip_projection
 
 
-def tan_half_fov(focal_length: float, sensor_height: float) -> float:
+def cot_half_fov(focal_length: float, sensor_height: float) -> float:
+    "cotangent of half vertical fov"
     #  construct tan of half the vertical field of view
 
-    return focal_length / sensor_height
+    return 2 * focal_length / sensor_height
 
 
 def transpose(x: torch.Tensor) -> torch.Tensor:
